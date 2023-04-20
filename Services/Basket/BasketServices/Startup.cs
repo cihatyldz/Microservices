@@ -1,4 +1,8 @@
+using BasketServices.Services;
+using BasketServices.Settings;
+using Catalog.Shared.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
@@ -7,13 +11,15 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
 using System;
 using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Threading.Tasks;
 
-namespace PhotoStockServices
+namespace BasketServices
 {
     public class Startup
     {
@@ -27,21 +33,40 @@ namespace PhotoStockServices
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
+            var requireAuthorizePolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();
+            JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Remove("sub");
             services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
             {
                 options.Authority = Configuration["IdentityServerURL"];
-                options.Audience = "resource_photo_stock";
+                options.Audience = "resource_basket";
                 options.RequireHttpsMetadata = false;
             });
 
+
+            services.AddHttpContextAccessor();
+            services.AddScoped<IBasketService, BasketService>();
+            services.AddScoped<ISharedIdentityService, SharedIdentityService>();
             services.AddControllers(opt =>
             {
-                opt.Filters.Add(new AuthorizeFilter());
+                opt.Filters.Add(new AuthorizeFilter(requireAuthorizePolicy));
+            });
+            services.Configure<RedisSettings>(Configuration.GetSection("RedisSettings"));
+
+
+            services.AddSingleton<RedisService>(sp =>
+            {
+                var redisSettings = sp.GetRequiredService<IOptions<RedisSettings>>().Value;
+
+                var redis = new RedisService(redisSettings.Host, redisSettings.Port);
+
+                redis.Connect();
+
+                return redis;
             });
 
             services.AddSwaggerGen(c =>
             {
-                c.SwaggerDoc("v1", new OpenApiInfo { Title = "PhotoStockServices", Version = "v1" });
+                c.SwaggerDoc("v1", new OpenApiInfo { Title = "BasketServices", Version = "v1" });
             });
         }
 
@@ -52,10 +77,8 @@ namespace PhotoStockServices
             {
                 app.UseDeveloperExceptionPage();
                 app.UseSwagger();
-                app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "PhotoStockServices v1"));
+                app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "BasketServices v1"));
             }
-
-            app.UseStaticFiles();
 
             app.UseRouting();
 
